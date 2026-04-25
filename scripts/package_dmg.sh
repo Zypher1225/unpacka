@@ -73,6 +73,41 @@ build_arch() {
   <string>14.0</string>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSServices</key>
+  <array>
+    <dict>
+      <key>NSMenuItem</key>
+      <dict>
+        <key>default</key>
+        <string>用解包鸭解压</string>
+      </dict>
+      <key>NSMessage</key>
+      <string>extractService</string>
+      <key>NSPortName</key>
+      <string>解包鸭</string>
+      <key>NSSendTypes</key>
+      <array>
+        <string>NSFilenamesPboardType</string>
+        <string>public.file-url</string>
+      </array>
+    </dict>
+    <dict>
+      <key>NSMenuItem</key>
+      <dict>
+        <key>default</key>
+        <string>用解包鸭压缩</string>
+      </dict>
+      <key>NSMessage</key>
+      <string>compressService</string>
+      <key>NSPortName</key>
+      <string>解包鸭</string>
+      <key>NSSendTypes</key>
+      <array>
+        <string>NSFilenamesPboardType</string>
+        <string>public.file-url</string>
+      </array>
+    </dict>
+  </array>
   <key>CFBundleDocumentTypes</key>
   <array>
     <dict>

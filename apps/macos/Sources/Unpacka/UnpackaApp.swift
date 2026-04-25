@@ -9,12 +9,18 @@ struct UnpackaApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(viewModel)
-                .frame(minWidth: 760, minHeight: 520)
+                .frame(minWidth: 540, minHeight: 340)
                 .onReceive(NotificationCenter.default.publisher(for: .unpackaOpenURLs)) { notification in
                     guard let urls = notification.object as? [URL] else {
                         return
                     }
                     viewModel.open(urls: urls)
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .unpackaCompressURLs)) { notification in
+                    guard let urls = notification.object as? [URL] else {
+                        return
+                    }
+                    viewModel.prepareCompression(urls: urls)
                 }
         }
         .windowStyle(.hiddenTitleBar)

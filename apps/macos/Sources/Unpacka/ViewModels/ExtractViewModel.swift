@@ -10,15 +10,11 @@ final class ExtractViewModel: ObservableObject {
     @Published var conflictPolicy: ConflictPolicy = .rename
     @Published var encodingPolicy: EncodingPolicy = .automatic
     @Published var performanceMode: PerformanceMode = .automatic
-    @Published var compressionFormat: ArchiveFormat = .zip
-    @Published var openedArchive: OpenedArchive?
-    @Published var archivePassword = ""
-    @Published var extractDestinationURL: URL?
+    @Published var pendingExtraction: PendingExtraction?
     @Published var compressionDraft: CompressionDraft?
     @Published var lastMessage: String?
 
     private let detector = ArchiveDetector()
-    private let previewer = ArchivePreviewer()
     private let extractor = ArchiveExtractor()
     private let compressor = ArchiveCompressor()
     private let outputResolver = OutputPathResolver()
@@ -45,62 +41,80 @@ final class ExtractViewModel: ObservableObject {
     func open(urls: [URL]) {
         urls.forEach { url in
             if detector.detect(url: url) == .unknown {
-                prepareCompression(urls: [url])
+                lastMessage = "请选择压缩包文件"
             } else {
-                openArchive(url)
+                prepareExtraction(url)
             }
         }
     }
 
-    func openArchive(_ url: URL) {
+    func prepareExtraction(_ url: URL) {
         let format = detector.detect(url: url)
-        lastMessage = "正在读取 \(url.lastPathComponent)"
-        Task {
-            do {
-                let archive = try await previewer.preview(url: url)
-                openedArchive = archive
-                extractDestinationURL = try outputResolver.defaultOutputURL(
-                    for: url,
-                    location: outputLocation,
-                    conflictPolicy: conflictPolicy
-                )
-                archivePassword = ""
-                lastMessage = "\(format.displayName) 压缩包已打开"
-            } catch {
-                openedArchive = OpenedArchive(url: url, format: format, entries: [])
-                extractDestinationURL = try? outputResolver.defaultOutputURL(
-                    for: url,
-                    location: outputLocation,
-                    conflictPolicy: conflictPolicy
-                )
-                lastMessage = error.localizedDescription
-            }
-        }
+        pendingExtraction = PendingExtraction(
+            sourceURL: url,
+            format: format,
+            destinationURL: url.deletingLastPathComponent(),
+            password: ""
+        )
+        lastMessage = "请选择 \(url.lastPathComponent) 的解压位置"
     }
 
-    func extractOpenedArchive() {
-        guard let openedArchive else {
+    func extractToCurrentDirectory() {
+        guard var pendingExtraction else {
             return
         }
+        pendingExtraction.destinationURL = pendingExtraction.currentDirectoryURL
+        self.pendingExtraction = pendingExtraction
+        extractPendingArchive()
+    }
 
-        let outputURL = extractDestinationURL ?? openedArchive.url.deletingLastPathComponent()
-        enqueueExtraction(url: openedArchive.url, outputURL: outputURL, format: openedArchive.format, password: archivePassword)
+    func extractPendingArchive() {
+        guard let pendingExtraction else {
+            return
+        }
+        enqueueExtraction(
+            url: pendingExtraction.sourceURL,
+            outputURL: pendingExtraction.destinationURL,
+            format: pendingExtraction.format,
+            password: pendingExtraction.password
+        )
+        self.pendingExtraction = nil
     }
 
     func chooseExtractDestination() {
+        guard let pendingExtraction else {
+            return
+        }
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
+        panel.directoryURL = pendingExtraction.destinationURL
         panel.begin { [weak self] response in
             guard response == .OK, let url = panel.url else {
                 return
             }
             Task { @MainActor in
-                self?.extractDestinationURL = url
+                self?.setPendingExtractionDestination(url)
             }
         }
+    }
+
+    func setPendingExtractionPassword(_ password: String) {
+        guard var pendingExtraction else {
+            return
+        }
+        pendingExtraction.password = password
+        self.pendingExtraction = pendingExtraction
+    }
+
+    private func setPendingExtractionDestination(_ url: URL) {
+        guard var pendingExtraction else {
+            return
+        }
+        pendingExtraction.destinationURL = url
+        self.pendingExtraction = pendingExtraction
     }
 
     func enqueueExtraction(url: URL, outputURL: URL? = nil, format: ArchiveFormat? = nil, password: String = "") {
@@ -172,28 +186,14 @@ final class ExtractViewModel: ObservableObject {
         }
     }
 
-    func chooseFilesToCompress() {
-        let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = true
-        panel.begin { [weak self] response in
-            guard response == .OK else {
-                return
-            }
-            Task { @MainActor in
-                self?.prepareCompression(urls: panel.urls)
-            }
-        }
-    }
-
     func prepareCompression(urls: [URL]) {
         guard let first = urls.first else {
             return
         }
 
-        let outputURL = defaultCompressedOutputURL(for: first, format: compressionFormat)
-        compressionDraft = CompressionDraft(sourceURLs: urls, format: compressionFormat, outputURL: outputURL, password: "")
+        let outputURL = defaultCompressedOutputURL(for: first, format: .zip)
+        compressionDraft = CompressionDraft(sourceURLs: urls, format: .zip, outputURL: outputURL, password: "")
+        lastMessage = "请选择压缩设置"
     }
 
     func chooseCompressionDestination() {
@@ -218,12 +218,18 @@ final class ExtractViewModel: ObservableObject {
 
     func updateCompressionFormat(_ format: ArchiveFormat) {
         guard var draft = compressionDraft, let first = draft.sourceURLs.first else {
-            compressionFormat = format
             return
         }
         draft.format = format
         draft.outputURL = defaultCompressedOutputURL(for: first, format: format)
-        compressionFormat = format
+        compressionDraft = draft
+    }
+
+    func updateCompressionPassword(_ password: String) {
+        guard var draft = compressionDraft else {
+            return
+        }
+        draft.password = password
         compressionDraft = draft
     }
 
@@ -232,9 +238,7 @@ final class ExtractViewModel: ObservableObject {
             return
         }
 
-        let outputURL = draft.outputURL
-        let format = draft.format
-        var task = ExtractTask(sourceURL: first, outputURL: outputURL, format: format, operation: .compress)
+        var task = ExtractTask(sourceURL: first, outputURL: draft.outputURL, format: draft.format, operation: .compress)
         tasks.insert(task, at: 0)
         let taskID = task.id
 
@@ -244,19 +248,13 @@ final class ExtractViewModel: ObservableObject {
         compressionDraft = nil
 
         Task {
-            await runCompression(taskID: taskID, sourceURLs: draft.sourceURLs, outputURL: outputURL, format: format, password: draft.password)
-        }
-    }
-
-    private func run(taskID: UUID, sourceURL: URL, outputURL: URL, format: ArchiveFormat, password: String) async {
-        do {
-            setProgress(taskID: taskID, progress: 0.42)
-            try await extractor.extract(sourceURL: sourceURL, outputURL: outputURL, format: format, password: password)
-            setStatus(taskID: taskID, status: .completed, progress: 1)
-            lastMessage = "已解压到 \(outputURL.path)"
-        } catch {
-            setStatus(taskID: taskID, status: .failed(error.localizedDescription), progress: 1)
-            lastMessage = error.localizedDescription
+            await runCompression(
+                taskID: taskID,
+                sourceURLs: draft.sourceURLs,
+                outputURL: draft.outputURL,
+                format: draft.format,
+                password: draft.password
+            )
         }
     }
 
@@ -287,6 +285,18 @@ final class ExtractViewModel: ObservableObject {
         case .unknown: fileName = "\(stem).archive"
         }
         return parent.appendingPathComponent(fileName)
+    }
+
+    private func run(taskID: UUID, sourceURL: URL, outputURL: URL, format: ArchiveFormat, password: String) async {
+        do {
+            setProgress(taskID: taskID, progress: 0.42)
+            try await extractor.extract(sourceURL: sourceURL, outputURL: outputURL, format: format, password: password)
+            setStatus(taskID: taskID, status: .completed, progress: 1)
+            lastMessage = "已解压到 \(outputURL.path)"
+        } catch {
+            setStatus(taskID: taskID, status: .failed(error.localizedDescription), progress: 1)
+            lastMessage = error.localizedDescription
+        }
     }
 
     private func update(taskID: UUID, with task: ExtractTask) {
