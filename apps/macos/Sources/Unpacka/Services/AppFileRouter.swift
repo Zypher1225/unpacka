@@ -3,7 +3,6 @@ import Foundation
 
 extension Notification.Name {
     static let unpackaOpenURLs = Notification.Name("unpackaOpenURLs")
-    static let unpackaCompressURLs = Notification.Name("unpackaCompressURLs")
 }
 
 final class AppFileRouter: NSObject, NSApplicationDelegate {
@@ -22,14 +21,6 @@ final class AppFileRouter: NSObject, NSApplicationDelegate {
             return
         }
         NotificationCenter.default.post(name: .unpackaOpenURLs, object: urls)
-    }
-
-    @objc func compressService(_ pasteboard: NSPasteboard, userData: String?, error: AutoreleasingUnsafeMutablePointer<NSString?>) {
-        guard let urls = fileURLs(from: pasteboard), !urls.isEmpty else {
-            error.pointee = "没有找到可压缩的文件"
-            return
-        }
-        NotificationCenter.default.post(name: .unpackaCompressURLs, object: urls)
     }
 
     private func fileURLs(from pasteboard: NSPasteboard) -> [URL]? {

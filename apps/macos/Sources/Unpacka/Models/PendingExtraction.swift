@@ -10,4 +10,3 @@ struct PendingExtraction: Equatable, Sendable {
         sourceURL.deletingLastPathComponent()
     }
 }
-

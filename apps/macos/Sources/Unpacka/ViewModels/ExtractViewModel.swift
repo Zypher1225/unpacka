@@ -12,6 +12,7 @@ final class ExtractViewModel: ObservableObject {
     @Published var performanceMode: PerformanceMode = .automatic
     @Published var pendingExtraction: PendingExtraction?
     @Published var compressionDraft: CompressionDraft?
+    @Published var passwordRetry: PendingExtraction?
     @Published var lastMessage: String?
 
     private let detector = ArchiveDetector()
@@ -25,26 +26,38 @@ final class ExtractViewModel: ObservableObject {
             return false
         }
 
+        let group = DispatchGroup()
+        let accumulator = URLAccumulator()
+
         for provider in fileProviders {
+            group.enter()
             provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { [weak self] item, _ in
-                guard let self, let data = item as? Data, let url = URL(dataRepresentation: data, relativeTo: nil) else {
+                defer {
+                    group.leave()
+                }
+                guard self != nil, let data = item as? Data, let url = URL(dataRepresentation: data, relativeTo: nil) else {
                     return
                 }
-                Task { @MainActor in
-                    self.open(urls: [url])
-                }
+                accumulator.append(url)
             }
+        }
+
+        group.notify(queue: .main) { [weak self] in
+            self?.open(urls: accumulator.urls)
         }
         return true
     }
 
     func open(urls: [URL]) {
-        urls.forEach { url in
-            if detector.detect(url: url) == .unknown {
-                lastMessage = "请选择压缩包文件"
-            } else {
-                prepareExtraction(url)
-            }
+        let archiveURLs = urls.filter { detector.detect(url: $0) != .unknown }
+        let regularURLs = urls.filter { detector.detect(url: $0) == .unknown }
+
+        if !regularURLs.isEmpty {
+            prepareCompression(urls: regularURLs)
+        }
+
+        archiveURLs.forEach { url in
+            prepareExtraction(url)
         }
     }
 
@@ -76,7 +89,8 @@ final class ExtractViewModel: ObservableObject {
             url: pendingExtraction.sourceURL,
             outputURL: pendingExtraction.destinationURL,
             format: pendingExtraction.format,
-            password: pendingExtraction.password
+            password: pendingExtraction.password,
+            retryCandidate: pendingExtraction
         )
         self.pendingExtraction = nil
     }
@@ -117,7 +131,13 @@ final class ExtractViewModel: ObservableObject {
         self.pendingExtraction = pendingExtraction
     }
 
-    func enqueueExtraction(url: URL, outputURL: URL? = nil, format: ArchiveFormat? = nil, password: String = "") {
+    func enqueueExtraction(
+        url: URL,
+        outputURL: URL? = nil,
+        format: ArchiveFormat? = nil,
+        password: String = "",
+        retryCandidate: PendingExtraction? = nil
+    ) {
         let resolvedFormat = format ?? detector.detect(url: url)
 
         do {
@@ -140,7 +160,19 @@ final class ExtractViewModel: ObservableObject {
             update(taskID: taskID, with: task)
 
             Task {
-                await run(taskID: taskID, sourceURL: url, outputURL: resolvedOutputURL, format: resolvedFormat, password: password)
+                await run(
+                    taskID: taskID,
+                    sourceURL: url,
+                    outputURL: resolvedOutputURL,
+                    format: resolvedFormat,
+                    password: password,
+                    retryCandidate: retryCandidate ?? PendingExtraction(
+                        sourceURL: url,
+                        format: resolvedFormat,
+                        destinationURL: resolvedOutputURL,
+                        password: ""
+                    )
+                )
             }
         } catch {
             lastMessage = error.localizedDescription
@@ -165,7 +197,19 @@ final class ExtractViewModel: ObservableObject {
             update(taskID: taskID, with: task)
 
             Task {
-                await run(taskID: taskID, sourceURL: url, outputURL: outputURL, format: format, password: "")
+                await run(
+                    taskID: taskID,
+                    sourceURL: url,
+                    outputURL: outputURL,
+                    format: format,
+                    password: "",
+                    retryCandidate: PendingExtraction(
+                        sourceURL: url,
+                        format: format,
+                        destinationURL: outputURL,
+                        password: ""
+                    )
+                )
             }
         } catch {
             lastMessage = error.localizedDescription
@@ -192,7 +236,7 @@ final class ExtractViewModel: ObservableObject {
         }
 
         let outputURL = defaultCompressedOutputURL(for: first, format: .zip)
-        compressionDraft = CompressionDraft(sourceURLs: urls, format: .zip, outputURL: outputURL, password: "")
+        compressionDraft = CompressionDraft(sourceURLs: urls, format: .zip, outputURL: outputURL, isEncrypted: false, password: "")
         lastMessage = "请选择压缩设置"
     }
 
@@ -222,6 +266,21 @@ final class ExtractViewModel: ObservableObject {
         }
         draft.format = format
         draft.outputURL = defaultCompressedOutputURL(for: first, format: format)
+        if !(format == .zip || format == .sevenZip) {
+            draft.isEncrypted = false
+            draft.password = ""
+        }
+        compressionDraft = draft
+    }
+
+    func updateCompressionEncryption(_ isEncrypted: Bool) {
+        guard var draft = compressionDraft else {
+            return
+        }
+        draft.isEncrypted = isEncrypted
+        if !isEncrypted {
+            draft.password = ""
+        }
         compressionDraft = draft
     }
 
@@ -253,7 +312,7 @@ final class ExtractViewModel: ObservableObject {
                 sourceURLs: draft.sourceURLs,
                 outputURL: draft.outputURL,
                 format: draft.format,
-                password: draft.password
+                password: draft.isEncrypted ? draft.password : ""
             )
         }
     }
@@ -287,7 +346,29 @@ final class ExtractViewModel: ObservableObject {
         return parent.appendingPathComponent(fileName)
     }
 
-    private func run(taskID: UUID, sourceURL: URL, outputURL: URL, format: ArchiveFormat, password: String) async {
+    func retryExtractionWithPassword(_ password: String) {
+        guard var retry = passwordRetry else {
+            return
+        }
+        retry.password = password
+        passwordRetry = nil
+        enqueueExtraction(
+            url: retry.sourceURL,
+            outputURL: retry.destinationURL,
+            format: retry.format,
+            password: retry.password,
+            retryCandidate: retry
+        )
+    }
+
+    private func run(
+        taskID: UUID,
+        sourceURL: URL,
+        outputURL: URL,
+        format: ArchiveFormat,
+        password: String,
+        retryCandidate: PendingExtraction
+    ) async {
         do {
             setProgress(taskID: taskID, progress: 0.42)
             try await extractor.extract(sourceURL: sourceURL, outputURL: outputURL, format: format, password: password)
@@ -295,8 +376,23 @@ final class ExtractViewModel: ObservableObject {
             lastMessage = "已解压到 \(outputURL.path)"
         } catch {
             setStatus(taskID: taskID, status: .failed(error.localizedDescription), progress: 1)
-            lastMessage = error.localizedDescription
+            if looksLikePasswordError(error.localizedDescription) {
+                passwordRetry = retryCandidate
+                lastMessage = "这个压缩包需要密码"
+            } else {
+                lastMessage = error.localizedDescription
+            }
         }
+    }
+
+    private func looksLikePasswordError(_ message: String) -> Bool {
+        let text = message.lowercased()
+        return text.contains("password")
+            || text.contains("wrong password")
+            || text.contains("encrypted")
+            || text.contains("data error")
+            || text.contains("密码")
+            || text.contains("加密")
     }
 
     private func update(taskID: UUID, with task: ExtractTask) {
@@ -319,5 +415,24 @@ final class ExtractViewModel: ObservableObject {
         }
         tasks[index].status = status
         tasks[index].progress = progress
+    }
+}
+
+private final class URLAccumulator: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [URL] = []
+
+    var urls: [URL] {
+        lock.lock()
+        defer {
+            lock.unlock()
+        }
+        return storage
+    }
+
+    func append(_ url: URL) {
+        lock.lock()
+        storage.append(url)
+        lock.unlock()
     }
 }

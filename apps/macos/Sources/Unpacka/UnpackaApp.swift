@@ -16,12 +16,6 @@ struct UnpackaApp: App {
                     }
                     viewModel.open(urls: urls)
                 }
-                .onReceive(NotificationCenter.default.publisher(for: .unpackaCompressURLs)) { notification in
-                    guard let urls = notification.object as? [URL] else {
-                        return
-                    }
-                    viewModel.prepareCompression(urls: urls)
-                }
         }
         .windowStyle(.hiddenTitleBar)
 

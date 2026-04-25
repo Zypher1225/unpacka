@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -34,19 +35,21 @@ struct ContentView: View {
             CompressionSheet()
                 .environmentObject(viewModel)
         }
+        .sheet(
+            isPresented: Binding(
+                get: { viewModel.passwordRetry != nil },
+                set: { if !$0 { viewModel.passwordRetry = nil } }
+            )
+        ) {
+            PasswordRetrySheet()
+                .environmentObject(viewModel)
+        }
     }
 }
 
 private struct ExtractionPromptView: View {
     @EnvironmentObject private var viewModel: ExtractViewModel
     let pendingExtraction: PendingExtraction
-
-    private var passwordBinding: Binding<String> {
-        Binding(
-            get: { pendingExtraction.password },
-            set: { viewModel.setPendingExtractionPassword($0) }
-        )
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -95,9 +98,6 @@ private struct ExtractionPromptView: View {
                 .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
             }
 
-            SecureField("密码（如果压缩包需要）", text: passwordBinding)
-                .textFieldStyle(.roundedBorder)
-
             HStack {
                 Button {
                     viewModel.pendingExtraction = nil
@@ -136,7 +136,7 @@ private struct EmptyToolView: View {
             VStack(spacing: 6) {
                 Text("解包鸭")
                     .font(.title.weight(.semibold))
-                Text("双击压缩包、右键打开，或拖入压缩包开始解压")
+                Text("拖入压缩包解压，拖入文件或文件夹压缩")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -173,6 +173,13 @@ private struct CompressionSheet: View {
         Binding(
             get: { viewModel.compressionDraft?.password ?? "" },
             set: { viewModel.updateCompressionPassword($0) }
+        )
+    }
+
+    private var isEncryptedBinding: Binding<Bool> {
+        Binding(
+            get: { viewModel.compressionDraft?.isEncrypted ?? false },
+            set: { viewModel.updateCompressionEncryption($0) }
         )
     }
 
@@ -213,9 +220,14 @@ private struct CompressionSheet: View {
                     .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
                 }
 
-                SecureField("密码（仅 ZIP / 7Z）", text: passwordBinding)
-                    .textFieldStyle(.roundedBorder)
-                    .disabled(!(draft.format == .zip || draft.format == .sevenZip))
+                if draft.format == .zip || draft.format == .sevenZip {
+                    Toggle("需要加密", isOn: isEncryptedBinding)
+
+                    if draft.isEncrypted {
+                        SecureField("密码", text: passwordBinding)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                }
 
                 HStack {
                     Button("取消") {
@@ -236,14 +248,64 @@ private struct CompressionSheet: View {
     }
 }
 
+private struct PasswordRetrySheet: View {
+    @EnvironmentObject private var viewModel: ExtractViewModel
+    @State private var password = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("需要密码")
+                .font(.title3.weight(.semibold))
+
+            Text(viewModel.passwordRetry?.sourceURL.lastPathComponent ?? "加密压缩包")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            SecureField("输入压缩包密码", text: $password)
+                .textFieldStyle(.roundedBorder)
+
+            HStack {
+                Button("取消") {
+                    viewModel.passwordRetry = nil
+                }
+                Spacer()
+                Button {
+                    viewModel.retryExtractionWithPassword(password)
+                } label: {
+                    Label("继续解压", systemImage: "lock.open.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(password.isEmpty)
+            }
+        }
+        .padding(22)
+        .frame(width: 420)
+    }
+}
+
 private struct AppIconMark: View {
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(.orange.gradient)
-            Image(systemName: "shippingbox.fill")
-                .font(.system(size: 28, weight: .semibold))
-                .foregroundStyle(.white)
+        if let image = bundledIcon {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFit()
+        } else {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(.orange.gradient)
+                Image(systemName: "archivebox.fill")
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
         }
+    }
+
+    private var bundledIcon: NSImage? {
+        guard let url = Bundle.main.resourceURL?.appendingPathComponent("AppIcon.icns") else {
+            return nil
+        }
+        return NSImage(contentsOf: url)
     }
 }
