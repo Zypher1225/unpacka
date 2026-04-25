@@ -3,7 +3,7 @@ import Foundation
 struct ArchiveCompressor {
     private let toolResolver = BackendToolResolver()
 
-    func compress(sourceURLs: [URL], outputURL: URL, format: ArchiveFormat) async throws {
+    func compress(sourceURLs: [URL], outputURL: URL, format: ArchiveFormat, password: String? = nil) async throws {
         guard let firstSource = sourceURLs.first else {
             throw ExtractError.outputUnavailable("没有选择要压缩的文件")
         }
@@ -15,7 +15,12 @@ struct ArchiveCompressor {
 
         switch format {
         case .zip:
-            try await runInParent(command: "/usr/bin/zip", arguments: ["-qry", outputURL.path] + sourceURLs.map(\.lastPathComponent), parent: firstSource.deletingLastPathComponent())
+            if let password, !password.isEmpty {
+                let tool = try toolResolver.sevenZipTool()
+                try await runInParent(command: tool, arguments: ["a", "-tzip", "-p\(password)", outputURL.path] + sourceURLs.map(\.lastPathComponent), parent: firstSource.deletingLastPathComponent())
+            } else {
+                try await runInParent(command: "/usr/bin/zip", arguments: ["-qry", outputURL.path] + sourceURLs.map(\.lastPathComponent), parent: firstSource.deletingLastPathComponent())
+            }
         case .tar:
             try await runInParent(command: "/usr/bin/tar", arguments: ["-cf", outputURL.path] + sourceURLs.map(\.lastPathComponent), parent: firstSource.deletingLastPathComponent())
         case .gzip:
@@ -38,7 +43,8 @@ struct ArchiveCompressor {
             }
         case .sevenZip:
             let tool = try toolResolver.sevenZipTool()
-            try await runInParent(command: tool, arguments: ["a", "-t7z", outputURL.path] + sourceURLs.map(\.lastPathComponent), parent: firstSource.deletingLastPathComponent())
+            let passwordArguments = password.map { $0.isEmpty ? [] : ["-p\($0)", "-mhe=on"] } ?? []
+            try await runInParent(command: tool, arguments: ["a", "-t7z"] + passwordArguments + [outputURL.path] + sourceURLs.map(\.lastPathComponent), parent: firstSource.deletingLastPathComponent())
         case .rar:
             if let rar = toolResolver.rarTool() {
                 try await runInParent(command: rar, arguments: ["a", "-r", outputURL.path] + sourceURLs.map(\.lastPathComponent), parent: firstSource.deletingLastPathComponent())

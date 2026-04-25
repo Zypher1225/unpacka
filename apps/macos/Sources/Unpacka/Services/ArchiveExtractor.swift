@@ -23,12 +23,18 @@ enum ExtractError: LocalizedError {
 struct ArchiveExtractor {
     private let toolResolver = BackendToolResolver()
 
-    func extract(sourceURL: URL, outputURL: URL, format: ArchiveFormat) async throws {
+    func extract(sourceURL: URL, outputURL: URL, format: ArchiveFormat, password: String? = nil) async throws {
         try FileManager.default.createDirectory(at: outputURL, withIntermediateDirectories: true)
+        let passwordArguments = password.map { $0.isEmpty ? [] : ["-p\($0)"] } ?? []
 
         switch format {
         case .zip:
-            try await run(command: "/usr/bin/ditto", arguments: ["-x", "-k", sourceURL.path, outputURL.path])
+            if passwordArguments.isEmpty {
+                try await run(command: "/usr/bin/ditto", arguments: ["-x", "-k", sourceURL.path, outputURL.path])
+            } else {
+                let tool = try toolResolver.sevenZipTool()
+                try await run(command: tool, arguments: ["x", "-y"] + passwordArguments + ["-o\(outputURL.path)", sourceURL.path])
+            }
         case .tar:
             try await run(command: "/usr/bin/tar", arguments: ["-xf", sourceURL.path, "-C", outputURL.path])
         case .gzip:
@@ -54,13 +60,14 @@ struct ArchiveExtractor {
             }
         case .sevenZip:
             let tool = try toolResolver.sevenZipTool()
-            try await run(command: tool, arguments: ["x", "-y", "-o\(outputURL.path)", sourceURL.path])
+            try await run(command: tool, arguments: ["x", "-y"] + passwordArguments + ["-o\(outputURL.path)", sourceURL.path])
         case .rar:
             if let unrar = toolResolver.unrarTool() {
-                try await run(command: unrar, arguments: ["x", "-y", sourceURL.path, outputURL.path])
+                let unrarPassword = password.map { $0.isEmpty ? [] : ["-p\($0)"] } ?? []
+                try await run(command: unrar, arguments: ["x", "-y"] + unrarPassword + [sourceURL.path, outputURL.path])
             } else {
                 let tool = try toolResolver.sevenZipTool()
-                try await run(command: tool, arguments: ["x", "-y", "-o\(outputURL.path)", sourceURL.path])
+                try await run(command: tool, arguments: ["x", "-y"] + passwordArguments + ["-o\(outputURL.path)", sourceURL.path])
             }
         case .unknown:
             throw ExtractError.unsupportedFormat(format)
