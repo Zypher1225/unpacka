@@ -89,6 +89,26 @@ struct ArchivePipelineTests {
         let content = try String(contentsOf: extracted.appendingPathComponent("source/note.txt"), encoding: .utf8)
         #expect(content == "bz2 compress works")
     }
+
+    @Test("compresses and extracts 7Z archive")
+    func compressesSevenZipArchive() async throws {
+        let sandbox = try Sandbox()
+        let source = sandbox.url.appendingPathComponent("source", isDirectory: true)
+        let output = sandbox.url.appendingPathComponent("bundle.7z")
+        let extracted = sandbox.url.appendingPathComponent("extracted", isDirectory: true)
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        try "7z compress works".write(
+            to: source.appendingPathComponent("note.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        try await ArchiveCompressor().compress(sourceURLs: [source], outputURL: output, format: .sevenZip)
+        try await ArchiveExtractor().extract(sourceURL: output, outputURL: extracted, format: .sevenZip)
+
+        let content = try String(contentsOf: extracted.appendingPathComponent("source/note.txt"), encoding: .utf8)
+        #expect(content == "7z compress works")
+    }
 }
 
 private struct Sandbox {

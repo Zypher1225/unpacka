@@ -23,6 +23,9 @@ build_arch() {
   rm -rf "$app_bundle" "$staging"
   mkdir -p "$app_bundle/Contents/MacOS" "$app_bundle/Contents/Resources" "$staging"
   cp "$build_product" "$app_bundle/Contents/MacOS/Unpacka"
+  mkdir -p "$app_bundle/Contents/Resources/bin"
+  cp "$ROOT_DIR/vendor/sevenzip/${arch}/7zz" "$app_bundle/Contents/Resources/bin/7zz"
+  chmod +x "$app_bundle/Contents/Resources/bin/7zz"
 
   cat > "$app_bundle/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -51,6 +54,7 @@ build_arch() {
 </plist>
 PLIST
 
+  codesign --force --sign - "$app_bundle/Contents/Resources/bin/7zz"
   codesign --force --deep --sign - "$app_bundle"
 
   cp -R "$app_bundle" "$staging/"

@@ -1,6 +1,8 @@
 import Foundation
 
 struct ArchiveCompressor {
+    private let toolResolver = BackendToolResolver()
+
     func compress(sourceURLs: [URL], outputURL: URL, format: ArchiveFormat) async throws {
         guard let firstSource = sourceURLs.first else {
             throw ExtractError.outputUnavailable("没有选择要压缩的文件")
@@ -35,10 +37,10 @@ struct ArchiveCompressor {
                 try await runInParent(command: "/usr/bin/tar", arguments: ["-cJf", outputURL.path] + sourceURLs.map(\.lastPathComponent), parent: firstSource.deletingLastPathComponent())
             }
         case .sevenZip:
-            let tool = try sevenZipTool()
+            let tool = try toolResolver.sevenZipTool()
             try await runInParent(command: tool, arguments: ["a", "-t7z", outputURL.path] + sourceURLs.map(\.lastPathComponent), parent: firstSource.deletingLastPathComponent())
         case .rar:
-            if let rar = firstExistingTool(["/opt/homebrew/bin/rar", "/usr/local/bin/rar", "/usr/bin/rar"]) {
+            if let rar = toolResolver.rarTool() {
                 try await runInParent(command: rar, arguments: ["a", "-r", outputURL.path] + sourceURLs.map(\.lastPathComponent), parent: firstSource.deletingLastPathComponent())
             } else {
                 throw ExtractError.missingTool("rar")
@@ -103,15 +105,4 @@ struct ArchiveCompressor {
         }.value
     }
 
-    private func sevenZipTool() throws -> String {
-        if let tool = firstExistingTool(["/opt/homebrew/bin/7zz", "/usr/local/bin/7zz", "/opt/homebrew/bin/7z", "/usr/local/bin/7z", "/usr/bin/7zz", "/usr/bin/7z"]) {
-            return tool
-        }
-        throw ExtractError.missingTool("7zz 或 7z")
-    }
-
-    private func firstExistingTool(_ candidates: [String]) -> String? {
-        candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
-    }
 }
-

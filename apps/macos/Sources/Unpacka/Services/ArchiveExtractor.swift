@@ -21,6 +21,8 @@ enum ExtractError: LocalizedError {
 }
 
 struct ArchiveExtractor {
+    private let toolResolver = BackendToolResolver()
+
     func extract(sourceURL: URL, outputURL: URL, format: ArchiveFormat) async throws {
         try FileManager.default.createDirectory(at: outputURL, withIntermediateDirectories: true)
 
@@ -51,29 +53,18 @@ struct ArchiveExtractor {
                 try await runStreamingOutput(command: "/usr/bin/env", arguments: ["xz", "-dc", sourceURL.path], outputURL: destination)
             }
         case .sevenZip:
-            let tool = try sevenZipTool()
+            let tool = try toolResolver.sevenZipTool()
             try await run(command: tool, arguments: ["x", "-y", "-o\(outputURL.path)", sourceURL.path])
         case .rar:
-            if let unrar = firstExistingTool(["/usr/bin/unrar", "/opt/homebrew/bin/unrar", "/usr/local/bin/unrar"]) {
+            if let unrar = toolResolver.unrarTool() {
                 try await run(command: unrar, arguments: ["x", "-y", sourceURL.path, outputURL.path])
             } else {
-                let tool = try sevenZipTool()
+                let tool = try toolResolver.sevenZipTool()
                 try await run(command: tool, arguments: ["x", "-y", "-o\(outputURL.path)", sourceURL.path])
             }
         case .unknown:
             throw ExtractError.unsupportedFormat(format)
         }
-    }
-
-    private func sevenZipTool() throws -> String {
-        if let tool = firstExistingTool(["/opt/homebrew/bin/7zz", "/usr/local/bin/7zz", "/opt/homebrew/bin/7z", "/usr/local/bin/7z", "/usr/bin/7zz", "/usr/bin/7z"]) {
-            return tool
-        }
-        throw ExtractError.missingTool("7zz 或 7z")
-    }
-
-    private func firstExistingTool(_ candidates: [String]) -> String? {
-        candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
     private func run(command: String, arguments: [String]) async throws {

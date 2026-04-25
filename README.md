@@ -6,8 +6,8 @@
 
 - 解压：`.zip`、`.tar`、`.tar.gz`、`.tgz`、`.gz`、`.tar.bz2`、`.tbz2`、`.bz2`、`.tar.xz`、`.txz`、`.xz`
 - 压缩：`.zip`、`.tar`、`.tar.gz`、`.tar.bz2`、`.tar.xz`
-- 7Z：安装 `7zz` 或 `7z` 后支持 `.7z` 解压和压缩
-- RAR：安装 `unrar` 或 `7zz/7z` 后支持 `.rar` 解压；安装 `rar` 后支持 `.rar` 压缩
+- 7Z：内置 7-Zip 后端，支持 `.7z` 解压和压缩
+- RAR：内置 7-Zip 后端，支持常见 `.rar` 解压
 - 拖拽解压
 - 批量选择解压
 - 选择文件或文件夹后压缩
@@ -48,14 +48,11 @@
 
 ### 7Z 和 RAR 支持
 
-macOS 默认不内置 7Z/RAR 后端。需要额外安装命令行工具：
+解包鸭的 DMG 已内置 7-Zip 后端，用户不需要额外安装 `7zz` 或 `7z`。
 
-```bash
-brew install sevenzip
-brew install unrar
-```
+RAR 解压通过内置 7-Zip 后端支持。RAR 压缩暂不作为内置功能提供，因为官方 `rar` 压缩工具是专有授权，直接随 App 分发并不适合第一版。
 
-RAR 压缩通常需要单独的 `rar` 命令，取决于本机安装和授权情况。
+如果你的 Mac 已额外安装 `rar` 命令，解包鸭会检测并启用 RAR 压缩。
 
 ## 本地开发
 
@@ -110,4 +107,3 @@ git push origin v0.1.0
 ```
 
 DMG 可以通过 GitHub Release 上传。
-
